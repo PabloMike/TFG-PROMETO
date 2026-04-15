@@ -18,16 +18,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $conexion = new mysqli("localhost","root","","vtc");
         if ($conexion->connect_error) die("Error: " . $conexion->connect_error);
 
-        $stmt = $conexion->prepare("SELECT id,nombre,email,password FROM usuarios WHERE email=?");
+		$stmt = $conexion->prepare("SELECT id,nombre,email,rol,password FROM usuarios WHERE email=?");
         $stmt->bind_param("s",$email);
         $stmt->execute();
         $usuario = $stmt->get_result()->fetch_assoc();
 
         if ($usuario && password_verify($password, $usuario['password'])) {
-            $_SESSION['id_usuario'] = $usuario['id'];
-            $_SESSION['nombre']     = $usuario['nombre'];
-            $_SESSION['email']      = $usuario['email'];
-            header("Location: inicio.php"); exit;
+           $_SESSION['id_usuario'] = $usuario['id'];
+		$_SESSION['nombre']     = $usuario['nombre'];
+		$_SESSION['email']      = $usuario['email'];
+		$_SESSION['rol']        = $usuario['rol'];
+
+		if ($usuario['rol'] === 'admin')      { header("Location: panel_admin.php");     exit; }
+		if ($usuario['rol'] === 'conductor')  { header("Location: panel_conductor.php"); exit; }
+		header("Location: inicio.php"); exit;
         } else {
             $errores = 'Credenciales incorrectas.';
         }
