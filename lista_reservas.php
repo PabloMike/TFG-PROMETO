@@ -18,6 +18,14 @@ $id_usuario = $_SESSION['id_usuario'];
 $conexion   = new mysqli("localhost","root","","vtc");
 $hoy        = date('Y-m-d');
 
+// Auto-completar reservas pasadas que siguen como "pendiente"
+$conexion->query(
+    "UPDATE reservas SET estado='completada'
+     WHERE id_usuario={$id_usuario}
+       AND estado='pendiente'
+       AND fecha_reserva < '{$hoy}'"
+);
+
 // ===== PRÓXIMAS: pendientes o confirmadas con fecha >= hoy, ordenadas por fecha/hora del servicio =====
 $stmt_prox = $conexion->prepare(
     "SELECT r.id, r.origen, r.destino, r.fecha_reserva, r.hora_reserva,
@@ -103,6 +111,30 @@ $tab_activa = isset($_GET['tab']) ? $_GET['tab'] : 'proximas';
     .tabla-reservas td { vertical-align:middle; }
     .tabla-reservas tr.pasada td { opacity:0.65; }
 
+    /* Badge completada */
+    .badge-completada {
+      background:#d4edda; color:#155724;
+      border:1px solid #c3e6cb; border-radius:20px;
+      padding:3px 12px; font-size:12px; font-weight:700;
+      white-space:nowrap;
+    }
+
+    /* Separadores de fecha en historial */
+    .fecha-separador td {
+      padding: 18px 12px 6px !important;
+      border-bottom: none !important;
+      background: transparent !important;
+    }
+    .fecha-separador .fecha-sep-texto {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.1em; color: #888;
+    }
+    .fecha-separador .fecha-sep-linea {
+      display: inline-block; height: 1px;
+      background: rgba(0,0,0,0.08); vertical-align: middle;
+      margin-left: 10px; width: 60%;
+    }
+
     /* Sin reservas */
     .sin-tab {
       text-align:center; padding:50px 20px; color:#888;
@@ -162,6 +194,12 @@ $tab_activa = isset($_GET['tab']) ? $_GET['tab'] : 'proximas';
     <?php
     function renderTabla(array $reservas, bool $mostrar_acciones = false): void {
         $iconos_pago = ['efectivo'=>'💵','tarjeta'=>'💳','bizum'=>'📱','transferencia'=>'🏦'];
+        $badges = [
+            'pendiente'  => ['clase'=>'badge-pendiente',  'texto'=>'Pendiente'],
+            'confirmada' => ['clase'=>'badge-confirmada', 'texto'=>'Confirmada'],
+            'completada' => ['clase'=>'badge-completada', 'texto'=>'Completada'],
+            'cancelada'  => ['clase'=>'badge-cancelada',  'texto'=>'Cancelada'],
+        ];
 
         if (empty($reservas)): ?>
           <div class="sin-tab">
@@ -192,19 +230,24 @@ $tab_activa = isset($_GET['tab']) ? $_GET['tab'] : 'proximas';
         <?php foreach ($grupos as $fecha => $filas):
             $ts      = strtotime($fecha);
             $dia_en  = date('l',$ts); $mes_en = date('F',$ts);
-            $fecha_es = ($dias_es[$dia_en]??$dia_en).', '.date('d',$ts).' de '.($meses_es[$mes_en]??$mes_en).' de '.date('Y',$ts);
-            if ($fecha===$hoy)        { $etiqueta='Hoy · '.$fecha_es;     $clase='hoy'; }
-            elseif($fecha===$manana)  { $etiqueta='Mañana · '.$fecha_es;  $clase='pronto'; }
-            else                      { $etiqueta=$fecha_es;               $clase=''; }
+            $dia_num = date('d',$ts); $anio = date('Y',$ts);
+            $fecha_es = ($dias_es[$dia_en]??$dia_en).', '.$dia_num.' de '.($meses_es[$mes_en]??$mes_en).' de '.$anio;
+
+            if ($fecha===$hoy)       { $etiqueta='HOY · '.$fecha_es;     $estilo='color:#256029;font-weight:800;'; }
+            elseif($fecha===$manana) { $etiqueta='MAÑANA · '.$fecha_es;  $estilo='color:#856404;font-weight:800;'; }
+            elseif($fecha < $hoy)    { $etiqueta=$fecha_es;               $estilo='color:#888;'; }
+            else                     { $etiqueta=$fecha_es;               $estilo='color:#444;font-weight:700;'; }
             $colspan = $mostrar_acciones ? 10 : 9;
         ?>
-              <tr>
-                <td colspan="<?php echo $colspan; ?>" style="padding:18px 12px 6px;background:transparent;border-bottom:none;">
-                  <span class="fecha-label <?php echo $clase; ?>"><?php echo ucfirst($etiqueta); ?></span>
-                  <span class="fecha-linea" style="display:inline-block;width:calc(100% - 220px);height:1px;background:rgba(0,0,0,0.08);vertical-align:middle;margin-left:10px;"></span>
+              <tr class="fecha-separador">
+                <td colspan="<?php echo $colspan; ?>">
+                  <span class="fecha-sep-texto" style="<?php echo $estilo; ?>"><?php echo $etiqueta; ?></span>
                 </td>
               </tr>
-        <?php foreach($filas as $f): ?>
+        <?php foreach($filas as $f):
+              $estado  = $f['estado'] ?? 'pendiente';
+              $badge   = $badges[$estado] ?? ['clase'=>'badge-pendiente','texto'=>ucfirst($estado)];
+        ?>
               <tr>
                 <td><?php echo htmlspecialchars($f['origen']); ?></td>
                 <td><?php echo htmlspecialchars($f['destino']); ?></td>
@@ -222,13 +265,13 @@ $tab_activa = isset($_GET['tab']) ? $_GET['tab'] : 'proximas';
                   <span style="font-size:13px;font-weight:600;color:#256029;"><?php echo ($iconos_pago[$f['metodo_pago']]??'').' '.ucfirst(htmlspecialchars($f['metodo_pago'])); ?></span>
                 <?php else: ?><span style="color:#aaa;font-size:13px;">—</span><?php endif; ?></td>
                 <td>
-                  <span class="badge-estado badge-<?php echo htmlspecialchars($f['estado']); ?>">
-                    <?php echo ucfirst(htmlspecialchars($f['estado'])); ?>
+                  <span class="<?php echo $badge['clase']; ?>">
+                    <?php echo $badge['texto']; ?>
                   </span>
                 </td>
                 <?php if($mostrar_acciones): ?>
                 <td>
-                  <?php if($f['estado']==='pendiente'): ?>
+                  <?php if($estado==='pendiente'): ?>
                     <div class="acciones-reserva">
                       <button class="acciones-btn" onclick="toggleAcciones(<?php echo $f['id']; ?>)" title="Opciones">•••</button>
                       <div class="acciones-menu" id="menu-<?php echo $f['id']; ?>">
