@@ -1,6 +1,8 @@
 <?php
 session_start();
 
+define('MAPS_API_KEY', 'AIzaSyAHJ4u8u0Dt-2Cb_8rYpZIQS2sCFo_N8Xc');
+
 $errores_login    = '';
 $mensaje_reserva  = '';
 $error_reserva    = '';
@@ -43,13 +45,14 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['formulario_login'])) {
         $errores_login = 'Debes introducir email y contraseña.';
     } else {
         $c  = new mysqli("localhost","root","","vtc");
-        $st = $c->prepare("SELECT id,nombre,email,password FROM usuarios WHERE email=?");
+        $st = $c->prepare("SELECT id,nombre,email,rol,password FROM usuarios WHERE email=?");
         $st->bind_param("s",$email); $st->execute();
         $u  = $st->get_result()->fetch_assoc();
         if ($u && password_verify($password,$u['password'])) {
             $_SESSION['id_usuario'] = $u['id'];
             $_SESSION['nombre']     = $u['nombre'];
             $_SESSION['email']      = $u['email'];
+            $_SESSION['rol']        = $u['rol'];
             header("Location: reserva.php"); exit;
         } else { $errores_login = 'Credenciales incorrectas.'; }
         $st->close(); $c->close();
@@ -68,6 +71,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['formulario_reserva'])) 
     $v_silla       = $_POST['silla_bebe']           ?? 'no';
     $v_silla_info  = trim($_POST['silla_info']      ?? '');
     $v_mascota     = $_POST['mascota']              ?? 'no';
+    $origen_place_id  = trim($_POST['origen_place_id']  ?? '');
+    $destino_place_id = trim($_POST['destino_place_id'] ?? '');
 
     if (!isset($_SESSION['id_usuario'])) {
         $error_reserva = 'Debes iniciar sesión para realizar una reserva.';
@@ -75,6 +80,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['formulario_reserva'])) 
               $v_pasajeros===''||intval($v_pasajeros)<=0||
               $v_km===''||floatval($v_km)<=0) {
         $error_reserva = 'Por favor rellena todos los campos obligatorios.';
+    } elseif ($origen_place_id===''||$destino_place_id==='') {
+        $error_reserva = 'Debes seleccionar las direcciones del autocompletado de Google Maps.';
     } else {
         $id_usuario    = $_SESSION['id_usuario'];
         $num_pasajeros = intval($v_pasajeros);
@@ -169,62 +176,50 @@ $err_km      = ($error_reserva!=='' && ($v_km===''||floatval($v_km)<=0));
     .tooltip-fila span:first-child { color:#aaa; }
     .input-error { border-color:#e74c3c !important; background:#fff8f8 !important; }
     .msg-error-campo { color:#e74c3c; font-size:12px; margin-top:4px; }
+
+    :root { color-scheme: light; }
+
+    gmp-place-autocomplete {
+      width: 100%;
+      display: block;
+      --gmp-mat-color-primary: #C9A84C;
+      color-scheme: light;
+    }
+
+    gmp-place-autocomplete input,
+    gmp-place-autocomplete [part="input"] {
+      color-scheme: light !important;
+      background: rgba(255,255,255,0.85) !important;
+      color: #111 !important;
+      border-radius: 8px !important;
+      border: 1.5px solid rgba(0,0,0,0.12) !important;
+      font-family: var(--font-body) !important;
+      font-size: 14px !important;
+      padding: 12px 14px !important;
+      width: 100% !important;
+      box-sizing: border-box !important;
+    }
+
+    .pac-container {
+      border-radius: 8px !important;
+      border: 1px solid rgba(201,168,76,0.35) !important;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.12) !important;
+      font-family: var(--font-body) !important;
+      z-index: 9999 !important;
+      background: white !important;
+    }
+    .pac-item { padding:10px 14px !important; font-size:13px !important; color:#333 !important; background:white !important; }
+    .pac-item:hover { background:rgba(201,168,76,0.08) !important; }
+    .pac-matched { color:var(--color-acento) !important; font-weight:700 !important; }
+    .pac-item-query { color:#111 !important; }
+
+    .validacion-msg { font-size:12px; font-weight:700; margin-top:5px; min-height:18px; }
+    .validacion-msg.ok    { color:#28a745; }
+    .validacion-msg.error { color:#e74c3c; }
+    .distancia-aviso { font-size:12px; color:var(--color-acento); font-weight:600; margin-top:4px; min-height:18px; }
+    .distancia-auto-nota { font-size:11px; color:#999; margin-top:4px; font-style:italic; }
+    input[readonly] { background:rgba(220,220,220,0.5) !important; cursor:not-allowed; }
   </style>
-  <script>
-  var precioBase=10, precioPorKm=1.20;
-
-  function recalcularPrecio() {
-    var km      = parseFloat(document.getElementById('distancia_km')?.value)||0;
-    var silla   = document.getElementById('silla_bebe')?.value||'no';
-    var mascota = document.getElementById('mascota')?.value||'no';
-    var nSillas = (silla!=='no'&&silla!=='otros'&&!isNaN(parseInt(silla))) ? parseInt(silla) : 0;
-    var pSilla  = nSillas * 10;
-    var pMascota= mascota==='si' ? 10 : 0;
-    var total   = km>0 ? precioBase + (km*precioPorKm) + pSilla + pMascota : 0;
-    var el=document.getElementById('precio-valor');
-    if(el) el.textContent = total>0 ? total.toFixed(2)+' €' : '—';
-    var ttBase=document.getElementById('tt-base');     if(ttBase)   ttBase.textContent   = precioBase.toFixed(2)+' €';
-    var ttKm=document.getElementById('tt-km');         if(ttKm)     ttKm.textContent     = km>0?(km*precioPorKm).toFixed(2)+' €':'—';
-    var ttSillas=document.getElementById('tt-sillas'); if(ttSillas) ttSillas.textContent = pSilla>0?pSilla.toFixed(2)+' €':'—';
-    var ttMasc=document.getElementById('tt-mascota');  if(ttMasc)   ttMasc.textContent   = pMascota>0?'10.00 €':'—';
-    var ttTot=document.getElementById('tt-total');     if(ttTot)    ttTot.textContent    = total>0?total.toFixed(2)+' €':'—';
-  }
-
-  function usarDireccion(dir, campo) {
-    var inp = document.getElementById(campo);
-    if(inp) inp.value = dir;
-  }
-
-  document.addEventListener('DOMContentLoaded', function(){
-    ['distancia_km','silla_bebe','mascota'].forEach(function(id){
-      var el=document.getElementById(id);
-      if(el){ el.addEventListener('change',recalcularPrecio); el.addEventListener('input',recalcularPrecio); }
-    });
-    recalcularPrecio();
-
-    var f=document.getElementById('fecha_reserva');
-    if(f) f.setAttribute('min',new Date().toISOString().split('T')[0]);
-
-    var selSilla=document.getElementById('silla_bebe'), bloqSilla=document.getElementById('bloque-silla-info');
-    if(selSilla&&bloqSilla) selSilla.addEventListener('change',function(){ bloqSilla.style.display=this.value!=='no'?'block':'none'; });
-
-    var selMasc=document.getElementById('mascota'), bloqMasc=document.getElementById('bloque-mascota-aviso');
-    if(selMasc&&bloqMasc) selMasc.addEventListener('change',function(){ bloqMasc.style.display=this.value==='si'?'block':'none'; });
-
-    var mo=document.getElementById('modal-mascotas');
-    if(mo) mo.addEventListener('click',function(e){ if(e.target===this) cerrarModal(); });
-  });
-
-  function abrirModal(){ document.getElementById('modal-mascotas').classList.add('activo'); }
-  function cerrarModal(){ document.getElementById('modal-mascotas').classList.remove('activo'); }
-  function cerrarDirMenus(){ document.querySelectorAll('[id^="dir-menu-"]').forEach(function(m){ m.style.display='none'; }); }
-  function toggleDirMenu(idx){
-    var m=document.getElementById('dir-menu-'+idx);
-    cerrarDirMenus();
-    if(m.style.display!=='block') m.style.display='block';
-  }
-  document.addEventListener('click',function(e){ if(!e.target.closest('#dirs-container')) cerrarDirMenus(); });
-  </script>
 </head>
 <body>
 
@@ -298,7 +293,13 @@ $err_km      = ($error_reserva!=='' && ($v_km===''||floatval($v_km)<=0));
     <h1>Nueva reserva</h1>
     <p class="subtitulo-form">Completa los datos para solicitar tu trayecto</p>
 
-    <?php if($error_reserva!==''): ?><div class="alerta alerta-error">⚠️ <?php echo htmlspecialchars($error_reserva); ?></div><?php endif; ?>
+    <?php if($error_reserva!==''): ?>
+      <div class="alerta alerta-error">⚠️ <?php echo htmlspecialchars($error_reserva); ?></div>
+    <?php endif; ?>
+
+    <div class="alerta alerta-info" style="font-size:13px;">
+      📍 Escribe la dirección y <strong>selecciona una opción del desplegable</strong> de Google Maps para validarla.
+    </div>
 
     <?php if(!empty($dirs_favoritas)): ?>
     <div style="margin-bottom:16px;">
@@ -313,10 +314,10 @@ $err_km      = ($error_reserva!=='' && ($v_km===''||floatval($v_km)<=0));
               <span>▾</span>
             </button>
             <div id="dir-menu-<?php echo $i; ?>" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:white;border:1px solid rgba(201,168,76,0.4);border-radius:0 0 8px 8px;overflow:hidden;box-shadow:0 6px 20px rgba(0,0,0,0.12);">
-              <button type="button" onclick="usarDireccion('<?php echo addslashes($d['direccion_completa']); ?>','origen');cerrarDirMenus();"
+              <button type="button" onclick="usarDireccionFavorita('<?php echo addslashes($d['direccion_completa']); ?>','origen');cerrarDirMenus();"
                 style="display:block;width:100%;text-align:left;padding:12px 16px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;color:#333;"
                 onmouseover="this.style.background='rgba(201,168,76,0.08)'" onmouseout="this.style.background='none'">➜ Usar como origen</button>
-              <button type="button" onclick="usarDireccion('<?php echo addslashes($d['direccion_completa']); ?>','destino');cerrarDirMenus();"
+              <button type="button" onclick="usarDireccionFavorita('<?php echo addslashes($d['direccion_completa']); ?>','destino');cerrarDirMenus();"
                 style="display:block;width:100%;text-align:left;padding:12px 16px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;color:#333;border-top:1px solid rgba(0,0,0,0.06);"
                 onmouseover="this.style.background='rgba(201,168,76,0.08)'" onmouseout="this.style.background='none'">➜ Usar como destino</button>
             </div>
@@ -328,20 +329,26 @@ $err_km      = ($error_reserva!=='' && ($v_km===''||floatval($v_km)<=0));
 
     <form action="reserva.php" method="post" id="form-reserva">
       <input type="hidden" name="formulario_reserva" value="1">
+      <input type="hidden" name="origen_place_id"  id="origen_place_id"  value="">
+      <input type="hidden" name="destino_place_id" id="destino_place_id" value="">
+      <input type="hidden" name="origen"  id="origen-hidden"  value="">
+      <input type="hidden" name="destino" id="destino-hidden" value="">
 
       <div>
         <label>Origen</label>
-        <input type="text" name="origen" id="origen" required placeholder="Ej: Aeropuerto de Málaga"
-          value="<?php echo htmlspecialchars($v_origen); ?>" class="<?php echo $err_origen?'input-error':''; ?>">
+        <input type="text" id="pac-origen" placeholder="Escribe la dirección de origen..." style="width:100%;padding:12px 14px;border:1.5px solid rgba(0,0,0,0.12);border-radius:8px;font-size:14px;background:rgba(255,255,255,0.85);color:#111;box-sizing:border-box;">
+        <div class="validacion-msg" id="val-origen"></div>
         <?php if($err_origen): ?><p class="msg-error-campo">⚠️ El origen es obligatorio.</p><?php endif; ?>
       </div>
 
       <div>
         <label>Destino</label>
-        <input type="text" name="destino" id="destino" required placeholder="Ej: Hotel Málaga Centro"
-          value="<?php echo htmlspecialchars($v_destino); ?>" class="<?php echo $err_destino?'input-error':''; ?>">
+        <input type="text" id="pac-destino" placeholder="Escribe la dirección de destino..." style="width:100%;padding:12px 14px;border:1.5px solid rgba(0,0,0,0.12);border-radius:8px;font-size:14px;background:rgba(255,255,255,0.85);color:#111;box-sizing:border-box;">
+        <div class="validacion-msg" id="val-destino"></div>
         <?php if($err_destino): ?><p class="msg-error-campo">⚠️ El destino es obligatorio.</p><?php endif; ?>
       </div>
+
+      <div class="distancia-aviso" id="distancia-aviso"></div>
 
       <div style="display:flex;gap:14px;flex-wrap:wrap;">
         <div style="flex:1;min-width:140px;">
@@ -367,8 +374,11 @@ $err_km      = ($error_reserva!=='' && ($v_km===''||floatval($v_km)<=0));
         </div>
         <div style="flex:1;min-width:130px;">
           <label>Distancia (km)</label>
-          <input type="number" name="distancia_km" id="distancia_km" step="0.1" min="0.1" placeholder="Ej: 15.5" required
-            value="<?php echo htmlspecialchars($v_km); ?>" class="<?php echo $err_km?'input-error':''; ?>">
+          <input type="number" name="distancia_km" id="distancia_km" step="0.1" min="0.1"
+            placeholder="Se calcula automáticamente" required readonly
+            value="<?php echo htmlspecialchars($v_km); ?>"
+            class="<?php echo $err_km?'input-error':''; ?>">
+          <p class="distancia-auto-nota">📍 Se rellena al seleccionar origen y destino</p>
           <?php if($err_km): ?><p class="msg-error-campo">⚠️ Indica la distancia en km.</p><?php endif; ?>
         </div>
       </div>
@@ -430,5 +440,179 @@ $err_km      = ($error_reserva!=='' && ($v_km===''||floatval($v_km)<=0));
 </div>
 
 <footer class="footer"><p>&copy; 2026 Prometeo VTC · Servicio privado de transporte en Málaga</p></footer>
+
+<script>
+var MAPS_KEY    = '<?php echo MAPS_API_KEY; ?>';
+var precioBase  = 10;
+var precioPorKm = 1.20;
+var origenValidado  = false;
+var destinoValidado = false;
+var origenAddr  = '';
+var destinoAddr = '';
+
+function recalcularPrecio() {
+  var km      = parseFloat(document.getElementById('distancia_km')?.value) || 0;
+  var silla   = document.getElementById('silla_bebe')?.value || 'no';
+  var mascota = document.getElementById('mascota')?.value || 'no';
+  var nSillas = (silla!=='no'&&silla!=='otros'&&!isNaN(parseInt(silla))) ? parseInt(silla) : 0;
+  var pSilla  = nSillas * 10;
+  var pMascota= mascota==='si' ? 10 : 0;
+  var total   = km>0 ? precioBase + (km*precioPorKm) + pSilla + pMascota : 0;
+  var el=document.getElementById('precio-valor');
+  if(el) el.textContent = total>0 ? total.toFixed(2)+' €' : '—';
+  var ttBase=document.getElementById('tt-base');     if(ttBase)   ttBase.textContent = precioBase.toFixed(2)+' €';
+  var ttKm=document.getElementById('tt-km');         if(ttKm)     ttKm.textContent   = km>0?(km*precioPorKm).toFixed(2)+' €':'—';
+  var ttSillas=document.getElementById('tt-sillas'); if(ttSillas) ttSillas.textContent = pSilla>0?pSilla.toFixed(2)+' €':'—';
+  var ttMasc=document.getElementById('tt-mascota');  if(ttMasc)   ttMasc.textContent   = pMascota>0?'10.00 €':'—';
+  var ttTot=document.getElementById('tt-total');     if(ttTot)    ttTot.textContent   = total>0?total.toFixed(2)+' €':'—';
+}
+
+function calcularDistancia() {
+  if (!origenValidado || !destinoValidado || !origenAddr || !destinoAddr) return;
+  var aviso = document.getElementById('distancia-aviso');
+  if(aviso) aviso.textContent = '⏳ Calculando distancia real por carretera...';
+  fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': MAPS_KEY,
+      'X-Goog-FieldMask': 'routes.distanceMeters'
+    },
+    body: JSON.stringify({
+      origin:      { address: origenAddr },
+      destination: { address: destinoAddr },
+      travelMode:  'DRIVE',
+      routingPreference: 'TRAFFIC_AWARE'
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.routes && data.routes.length > 0) {
+      var metros = data.routes[0].distanceMeters;
+      var km     = Math.ceil(metros / 100) / 10;
+      document.getElementById('distancia_km').value = km.toFixed(1);
+      if(aviso) aviso.textContent = '✅ ' + km.toFixed(1) + ' km por carretera';
+      recalcularPrecio();
+    } else {
+      if(aviso) aviso.textContent = '⚠️ No se pudo calcular la ruta. Introduce la distancia manualmente.';
+      document.getElementById('distancia_km').removeAttribute('readonly');
+    }
+  })
+  .catch(() => {
+    if(aviso) aviso.textContent = '⚠️ Error de conexión. Introduce la distancia manualmente.';
+    document.getElementById('distancia_km').removeAttribute('readonly');
+  });
+}
+
+function setVal(campo, cls, txt) {
+  var el = document.getElementById('val-' + campo);
+  if(!el) return;
+  el.className = 'validacion-msg' + (cls ? ' '+cls : '');
+  el.textContent = txt || '';
+}
+
+function usarDireccionFavorita(dir, campo) {
+  document.getElementById('pac-' + campo).value = dir;
+  document.getElementById(campo+'_place_id').value = 'favorita';
+  document.getElementById(campo+'-hidden').value   = dir;
+  if(campo==='origen')  { origenValidado=true;  origenAddr=dir;  setVal('origen',  'ok','✔ Dirección favorita seleccionada'); }
+  if(campo==='destino') { destinoValidado=true; destinoAddr=dir; setVal('destino', 'ok','✔ Dirección favorita seleccionada'); }
+  calcularDistancia();
+}
+
+function validarFormulario(e) {
+  if (!origenValidado) {
+    e.preventDefault();
+    setVal('origen','error','✖ Selecciona el origen del desplegable de Google Maps');
+    document.getElementById('pac-origen').scrollIntoView({behavior:'smooth',block:'center'});
+    return false;
+  }
+  if (!destinoValidado) {
+    e.preventDefault();
+    setVal('destino','error','✖ Selecciona el destino del desplegable de Google Maps');
+    document.getElementById('pac-destino').scrollIntoView({behavior:'smooth',block:'center'});
+    return false;
+  }
+  return true;
+}
+
+async function initPlaces() {
+  const { Autocomplete } = await google.maps.importLibrary("places");
+  const options = { componentRestrictions: { country: 'es' }, fields: ['geometry', 'formatted_address', 'place_id'], types: ['geocode'] };
+
+  const acOrigen = new Autocomplete(document.getElementById('pac-origen'), options);
+  const acDestino = new Autocomplete(document.getElementById('pac-destino'), options);
+
+  acOrigen.addListener('place_changed', () => {
+    const place = acOrigen.getPlace();
+    if (!place.geometry) {
+      setVal('origen', 'error', '✖ Haz clic en una opción del desplegable');
+      origenValidado = false;
+    } else {
+      origenAddr = place.formatted_address;
+      document.getElementById('origen_place_id').value = place.place_id;
+      document.getElementById('origen-hidden').value = origenAddr;
+      origenValidado = true;
+      setVal('origen', 'ok', '✔ Origen validado');
+      calcularDistancia();
+    }
+  });
+
+  acDestino.addListener('place_changed', () => {
+    const place = acDestino.getPlace();
+    if (!place.geometry) {
+      setVal('destino', 'error', '✖ Haz clic en una opción del desplegable');
+      destinoValidado = false;
+    } else {
+      destinoAddr = place.formatted_address;
+      document.getElementById('destino_place_id').value = place.place_id;
+      document.getElementById('destino-hidden').value = destinoAddr;
+      destinoValidado = true;
+      setVal('destino', 'ok', '✔ Destino validado');
+      calcularDistancia();
+    }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  initPlaces();
+  
+  ['silla_bebe','mascota'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if(el) el.addEventListener('change', recalcularPrecio);
+  });
+
+  var f = document.getElementById('fecha_reserva');
+  if(f) f.setAttribute('min', new Date().toISOString().split('T')[0]);
+
+  var selSilla=document.getElementById('silla_bebe'), bloqSilla=document.getElementById('bloque-silla-info');
+  if(selSilla&&bloqSilla) selSilla.addEventListener('change',function(){ bloqSilla.style.display=this.value!=='no'?'block':'none'; });
+
+  var selMasc=document.getElementById('mascota'), bloqMasc=document.getElementById('bloque-mascota-aviso');
+  if(selMasc&&bloqMasc) selMasc.addEventListener('change',function(){ bloqMasc.style.display=this.value==='si'?'block':'none'; });
+
+  var form=document.getElementById('form-reserva');
+  if(form) form.addEventListener('submit', validarFormulario);
+});
+
+function abrirModal(){ document.getElementById('modal-mascotas').classList.add('activo'); }
+function cerrarModal(){ document.getElementById('modal-mascotas').classList.remove('activo'); }
+function cerrarDirMenus(){ document.querySelectorAll('[id^="dir-menu-"]').forEach(function(m){ m.style.display='none'; }); }
+function toggleDirMenu(idx){
+  var m=document.getElementById('dir-menu-'+idx);
+  cerrarDirMenus();
+  if(m.style.display!=='block') m.style.display='block';
+}
+document.addEventListener('click',function(e){ if(!e.target.closest('#dirs-container')) cerrarDirMenus(); });
+</script>
+
+<script>
+  (g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);a.src=`https://maps.${c}apis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once."):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})({
+    key: "<?php echo MAPS_API_KEY; ?>",
+    v: "weekly",
+    language: "es",
+    region: "ES"
+  });
+</script>
 </body>
 </html>

@@ -2,15 +2,15 @@
 session_start();
 if (!isset($_SESSION['id_usuario'])) { header("Location: login.php"); exit; }
 
+define('MAPS_API_KEY', 'AIzaSyAHJ4u8u0Dt-2Cb_8rYpZIQS2sCFo_N8Xc');
+
 $id_usuario = $_SESSION['id_usuario'];
 $conexion   = new mysqli("localhost","root","","vtc");
 
-// Cargar datos usuario
 $st = $conexion->prepare("SELECT nombre,email,telefono FROM usuarios WHERE id=?");
 $st->bind_param("i",$id_usuario); $st->execute();
 $usuario = $st->get_result()->fetch_assoc(); $st->close();
 
-// Cargar direcciones favoritas
 $dirs = [];
 $st = $conexion->prepare("SELECT id,alias,direccion_completa,ciudad,codigo_postal FROM direcciones WHERE id_usuario=? ORDER BY id ASC");
 $st->bind_param("i",$id_usuario); $st->execute();
@@ -20,11 +20,9 @@ $st->close();
 
 $ok = ''; $error = '';
 
-// ===== ACCIONES POST =====
 if ($_SERVER['REQUEST_METHOD']==='POST') {
     $accion = $_POST['accion'] ?? '';
 
-    // --- Datos personales ---
     if ($accion==='datos') {
         $nombre   = trim($_POST['nombre']   ?? '');
         $telefono = trim($_POST['telefono'] ?? '');
@@ -38,7 +36,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
         }
     }
 
-    // --- Cambiar contraseña ---
     if ($accion==='password') {
         $actual = $_POST['password_actual'] ?? '';
         $nueva  = $_POST['password_nueva']  ?? '';
@@ -59,7 +56,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
         }
     }
 
-    // --- Añadir dirección favorita ---
     if ($accion==='add_dir') {
         $alias    = trim($_POST['alias']    ?? '');
         $dir_comp = trim($_POST['dir_comp'] ?? '');
@@ -75,7 +71,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
         }
     }
 
-    // --- Eliminar dirección ---
     if ($accion==='del_dir') {
         $id_dir = intval($_POST['id_dir'] ?? 0);
         $st=$conexion->prepare("DELETE FROM direcciones WHERE id=? AND id_usuario=?");
@@ -88,7 +83,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
 if (isset($_GET['ok'])) {
     $msgs = ['dir'=>'Dirección añadida correctamente.','del'=>'Dirección eliminada.'];
     $ok = $msgs[$_GET['ok']] ?? '';
-    // Recargar dirs
     $dirs=[];
     $st=$conexion->prepare("SELECT id,alias,direccion_completa,ciudad,codigo_postal FROM direcciones WHERE id_usuario=? ORDER BY id ASC");
     $st->bind_param("i",$id_usuario); $st->execute();
@@ -124,6 +118,14 @@ $conexion->close();
     .campo-perfil input { width:100%; padding:12px 14px; border-radius:8px; border:1.5px solid rgba(0,0,0,0.12); background:rgba(255,255,255,0.85); font-size:14px; font-family:var(--font-body); color:#111; transition:border-color 0.2s,box-shadow 0.2s; }
     .campo-perfil input:focus { border-color:var(--color-acento); box-shadow:0 0 0 3px rgba(201,168,76,0.18); outline:none; }
     .campo-perfil input:disabled { background:#f0f0f0; color:#aaa; }
+
+    /* Maps */
+    .validacion-dir { font-size:12px; font-weight:700; margin-top:4px; min-height:16px; }
+    .validacion-dir.ok    { color:#28a745; }
+    .validacion-dir.error { color:#e74c3c; }
+    .pac-container { border-radius:8px!important; border:1px solid rgba(201,168,76,0.35)!important; box-shadow:0 6px 20px rgba(0,0,0,0.12)!important; font-family:var(--font-body)!important; z-index:9999!important; }
+    .pac-item { padding:10px 14px!important; font-size:13px!important; }
+    .pac-matched { color:var(--color-acento)!important; font-weight:700!important; }
   </style>
   <script>
     function activarTab(id) {
@@ -156,10 +158,9 @@ $conexion->close();
 
     <div style="background:rgba(255,255,255,0.52);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.75);border-radius:16px;padding:36px 40px;box-shadow:0 16px 50px rgba(0,0,0,0.12);">
 
-      <!-- TABS -->
       <div class="tabs">
-        <button class="tab-btn" id="tab-datos"      onclick="activarTab('datos')">👤 Datos personales</button>
-        <button class="tab-btn" id="tab-password"   onclick="activarTab('password')">🔒 Contraseña</button>
+        <button class="tab-btn" id="tab-datos"       onclick="activarTab('datos')">👤 Datos personales</button>
+        <button class="tab-btn" id="tab-password"    onclick="activarTab('password')">🔒 Contraseña</button>
         <button class="tab-btn" id="tab-direcciones" onclick="activarTab('direcciones')">📌 Direcciones favoritas</button>
       </div>
 
@@ -234,8 +235,10 @@ $conexion->close();
 
         <hr style="border:none;border-top:1px solid rgba(0,0,0,0.08);margin:24px 0;">
         <h3 style="font-size:15px;font-weight:700;color:#111;margin-bottom:16px;">➕ Añadir dirección</h3>
-        <form method="post">
+        <form method="post" id="form-dir">
           <input type="hidden" name="accion" value="add_dir">
+          <input type="hidden" name="dir_comp" id="dir_comp_hidden" value="">
+
           <div style="display:flex;gap:14px;flex-wrap:wrap;">
             <div class="campo-perfil" style="flex:1;min-width:180px;">
               <label>Alias <span style="color:#e74c3c;">*</span></label>
@@ -243,17 +246,19 @@ $conexion->close();
             </div>
             <div class="campo-perfil" style="flex:2;min-width:220px;">
               <label>Dirección completa <span style="color:#e74c3c;">*</span></label>
-              <input type="text" name="dir_comp" required placeholder="Ej: Calle Larios 5, Málaga">
+              <input type="text" id="pac-direccion" autocomplete="off" required
+                placeholder="Escribe y selecciona del desplegable...">
+              <div class="validacion-dir" id="val-dir"></div>
             </div>
           </div>
           <div style="display:flex;gap:14px;flex-wrap:wrap;">
             <div class="campo-perfil" style="flex:2;min-width:180px;">
               <label>Ciudad</label>
-              <input type="text" name="ciudad" placeholder="Ej: Málaga">
+              <input type="text" name="ciudad" id="ciudad-input" placeholder="Ej: Málaga">
             </div>
             <div class="campo-perfil" style="flex:1;min-width:120px;">
               <label>Código postal</label>
-              <input type="text" name="cp" placeholder="29001">
+              <input type="text" name="cp" id="cp-input" placeholder="29001">
             </div>
           </div>
           <button type="submit" class="btn secondary" style="width:100%;margin-top:4px;">Guardar dirección</button>
@@ -271,5 +276,76 @@ $conexion->close();
 </div>
 
 <footer class="footer"><p>&copy; 2026 Prometeo VTC · Servicio privado de transporte en Málaga</p></footer>
+
+<script>
+var MAPS_API_KEY = '<?php echo MAPS_API_KEY; ?>';
+var dirValidada = false;
+
+function setValDir(cls, txt) {
+  var el = document.getElementById('val-dir');
+  if(!el) return;
+  el.className = 'validacion-dir' + (cls ? ' '+cls : '');
+  el.textContent = txt || '';
+}
+
+async function initPlacesPerfil() {
+  const { Autocomplete } = await google.maps.importLibrary("places");
+  const options = {
+    componentRestrictions: { country: 'es' },
+    fields: ['formatted_address', 'place_id', 'address_components'],
+    types: ['geocode']
+  };
+
+  const acDir = new Autocomplete(document.getElementById('pac-direccion'), options);
+
+  acDir.addListener('place_changed', () => {
+    const place = acDir.getPlace();
+    if (!place.place_id) {
+      setValDir('error', '✖ Selecciona una opción del desplegable');
+      dirValidada = false;
+      document.getElementById('dir_comp_hidden').value = '';
+    } else {
+      var addr = place.formatted_address;
+      document.getElementById('dir_comp_hidden').value = addr;
+      dirValidada = true;
+      setValDir('ok', '✔ Dirección validada');
+
+      // Autorellenar ciudad y código postal si están vacíos
+      if (place.address_components) {
+        var ciudad = ''; var cp = '';
+        place.address_components.forEach(function(c) {
+          if (c.types.includes('locality'))            ciudad = c.long_name;
+          if (c.types.includes('postal_code'))         cp     = c.long_name;
+        });
+        var ciudadInp = document.getElementById('ciudad-input');
+        var cpInp     = document.getElementById('cp-input');
+        if (ciudadInp && ciudad && ciudadInp.value === '') ciudadInp.value = ciudad;
+        if (cpInp     && cp     && cpInp.value === '')     cpInp.value     = cp;
+      }
+    }
+  });
+
+  // Validar formulario de dirección
+  document.getElementById('form-dir').addEventListener('submit', function(e) {
+    if (!dirValidada || document.getElementById('dir_comp_hidden').value === '') {
+      e.preventDefault();
+      setValDir('error', '✖ Selecciona una dirección del desplegable de Google Maps');
+    }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  initPlacesPerfil();
+});
+</script>
+
+<script>
+  (g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);a.src=`https://maps.${c}apis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once."):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})({
+    key: "<?php echo MAPS_API_KEY; ?>",
+    v: "weekly",
+    language: "es",
+    region: "ES"
+  });
+</script>
 </body>
 </html>

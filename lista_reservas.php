@@ -22,7 +22,7 @@ $hoy        = date('Y-m-d');
 $conexion->query(
     "UPDATE reservas SET estado='completada'
      WHERE id_usuario={$id_usuario}
-       AND estado='pendiente'
+       AND estado IN ('pendiente','asignada')
        AND fecha_reserva < '{$hoy}'"
 );
 
@@ -31,11 +31,13 @@ $stmt_prox = $conexion->prepare(
     "SELECT r.id, r.origen, r.destino, r.fecha_reserva, r.hora_reserva,
             r.num_pasajeros, r.distancia_km, r.precio, r.estado,
             r.silla_bebe, r.mascota, r.fecha_creacion,
-            p.metodo_pago
+            p.metodo_pago,
+            c.nombre AS nombre_conductor, c.telefono AS telefono_conductor
      FROM reservas r
      LEFT JOIN pagos p ON p.id_reserva = r.id
+     LEFT JOIN usuarios c ON c.id = r.id_conductor
      WHERE r.id_usuario = ?
-       AND r.estado IN ('pendiente','confirmada')
+       AND r.estado IN ('pendiente','confirmada','asignada')
        AND r.fecha_reserva >= ?
      ORDER BY r.fecha_reserva ASC, r.hora_reserva ASC"
 );
@@ -49,11 +51,13 @@ $stmt_hist = $conexion->prepare(
     "SELECT r.id, r.origen, r.destino, r.fecha_reserva, r.hora_reserva,
             r.num_pasajeros, r.distancia_km, r.precio, r.estado,
             r.silla_bebe, r.mascota, r.fecha_creacion,
-            p.metodo_pago
+            p.metodo_pago,
+            c.nombre AS nombre_conductor, c.telefono AS telefono_conductor
      FROM reservas r
      LEFT JOIN pagos p ON p.id_reserva = r.id
+     LEFT JOIN usuarios c ON c.id = r.id_conductor
      WHERE r.id_usuario = ?
-       AND NOT (r.estado IN ('pendiente','confirmada') AND r.fecha_reserva >= ?)
+       AND NOT (r.estado IN ('pendiente','confirmada','asignada') AND r.fecha_reserva >= ?)
      ORDER BY r.fecha_reserva DESC, r.hora_reserva DESC"
 );
 $stmt_hist->bind_param("is", $id_usuario, $hoy);
@@ -111,14 +115,6 @@ $tab_activa = isset($_GET['tab']) ? $_GET['tab'] : 'proximas';
     .tabla-reservas td { vertical-align:middle; }
     .tabla-reservas tr.pasada td { opacity:0.65; }
 
-    /* Badge completada */
-    .badge-completada {
-      background:#d4edda; color:#155724;
-      border:1px solid #c3e6cb; border-radius:20px;
-      padding:3px 12px; font-size:12px; font-weight:700;
-      white-space:nowrap;
-    }
-
     /* Separadores de fecha en historial */
     .fecha-separador td {
       padding: 18px 12px 6px !important;
@@ -141,6 +137,11 @@ $tab_activa = isset($_GET['tab']) ? $_GET['tab'] : 'proximas';
     }
     .sin-tab .sin-icono { font-size:3rem; margin-bottom:12px; }
     .sin-tab p { font-size:15px; }
+
+    /* Columna conductor */
+    .conductor-info { font-size:12px; color:#444; line-height:1.6; }
+    .conductor-info .cond-nombre { font-weight:700; color:#111; }
+    .conductor-info .cond-tel    { color:#666; }
   </style>
   <script>
     function activarTab(id) {
@@ -197,6 +198,7 @@ $tab_activa = isset($_GET['tab']) ? $_GET['tab'] : 'proximas';
         $badges = [
             'pendiente'  => ['clase'=>'badge-pendiente',  'texto'=>'Pendiente'],
             'confirmada' => ['clase'=>'badge-confirmada', 'texto'=>'Confirmada'],
+            'asignada'   => ['clase'=>'badge-asignada',   'texto'=>'Asignada'],
             'completada' => ['clase'=>'badge-completada', 'texto'=>'Completada'],
             'cancelada'  => ['clase'=>'badge-cancelada',  'texto'=>'Cancelada'],
         ];
@@ -222,7 +224,7 @@ $tab_activa = isset($_GET['tab']) ? $_GET['tab'] : 'proximas';
               <tr>
                 <th>Origen</th><th>Destino</th><th>Hora</th>
                 <th>Pasaj.</th><th>KM</th><th>Precio</th>
-                <th>Extras</th><th>Pago</th><th>Estado</th>
+                <th>Extras</th><th>Pago</th><th>Estado</th><th>Conductor</th>
                 <?php if($mostrar_acciones): ?><th></th><?php endif; ?>
               </tr>
             </thead>
@@ -237,7 +239,7 @@ $tab_activa = isset($_GET['tab']) ? $_GET['tab'] : 'proximas';
             elseif($fecha===$manana) { $etiqueta='MAÑANA · '.$fecha_es;  $estilo='color:#856404;font-weight:800;'; }
             elseif($fecha < $hoy)    { $etiqueta=$fecha_es;               $estilo='color:#888;'; }
             else                     { $etiqueta=$fecha_es;               $estilo='color:#444;font-weight:700;'; }
-            $colspan = $mostrar_acciones ? 10 : 9;
+            $colspan = $mostrar_acciones ? 11 : 10;
         ?>
               <tr class="fecha-separador">
                 <td colspan="<?php echo $colspan; ?>">
@@ -268,6 +270,16 @@ $tab_activa = isset($_GET['tab']) ? $_GET['tab'] : 'proximas';
                   <span class="<?php echo $badge['clase']; ?>">
                     <?php echo $badge['texto']; ?>
                   </span>
+                </td>
+                <td>
+                  <?php if(in_array($estado,['asignada','completada']) && !empty($f['nombre_conductor'])): ?>
+                    <div class="conductor-info">
+                      <div class="cond-nombre">🚗 <?php echo htmlspecialchars($f['nombre_conductor']); ?></div>
+                      <div class="cond-tel">📞 <?php echo htmlspecialchars($f['telefono_conductor']); ?></div>
+                    </div>
+                  <?php else: ?>
+                    <span style="color:#ccc;font-size:13px;">—</span>
+                  <?php endif; ?>
                 </td>
                 <?php if($mostrar_acciones): ?>
                 <td>
